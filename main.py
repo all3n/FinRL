@@ -39,7 +39,6 @@ def main():
 
     elif options.mode == "download_data":
         from finrl.marketdata.yahoodownloader import YahooDownloader
-
         df = YahooDownloader(start_date=config.START_DATE,
                              end_date=config.END_DATE,
                              ticker_list=config.DOW_30_TICKER).fetch_data()
