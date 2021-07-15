@@ -60,6 +60,7 @@ class FeatureEngineer:
 
         # fill the missing values at the beginning and the end
         df = df.fillna(method="bfill").fillna(method="ffill")
+        df.replace([np.inf, -np.inf], 0, inplace = True)
         return df
 
     def add_technical_indicator(self, data):
