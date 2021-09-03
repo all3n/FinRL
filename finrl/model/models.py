@@ -31,7 +31,8 @@ from stable_baselines3.common.noise import (
 )
 
 from stable_baselines3 import SAC
-
+from tqdm.auto import tqdm
+from stable_baselines3.common.callbacks import BaseCallback
 
 MODELS = {"a2c": A2C, "ddpg": DDPG, "td3": TD3, "sac": SAC, "ppo": PPO}
 
@@ -42,6 +43,31 @@ NOISE = {
     "ornstein_uhlenbeck": OrnsteinUhlenbeckActionNoise,
 }
 
+
+class TqdmCallback(BaseCallback):
+    def __init__(self, total_timesteps, n):
+        super().__init__()
+        self.total_timesteps = total_timesteps
+        self.n = n
+        self.progress_bar = None
+    
+    def _on_training_start(self):
+        self.progress_bar = tqdm(total=self.n)
+    
+    def _on_step(self):
+#         self.progress_bar.update(1)
+        if self.n > 1 and self.num_timesteps % self.n == 0:
+            self.progress_bar.set_description(str(self.num_timesteps / n))
+            self.progress_bar.reset()
+        self.progress_bar.n = self.num_timesteps
+        self.progress_bar.update(0)
+        
+        
+        return True
+
+    def _on_training_end(self):
+        self.progress_bar.close()
+        self.progress_bar = None
 
 class DRLAgent:
     """Provides implementations for DRL algorithms
@@ -66,6 +92,11 @@ class DRLAgent:
         DRL_prediction()
             make a prediction in a test dataset and get results
     """
+    def load_model(self, model_name, model_path):
+        model = MODELS[model_name].load(model_path)
+        return model
+
+
 
     @staticmethod
     def DRL_prediction(model, environment):
@@ -124,8 +155,8 @@ class DRLAgent:
         )
         return model
 
-    def train_model(self, model, tb_log_name, total_timesteps=5000):
-        model = model.learn(total_timesteps=total_timesteps, tb_log_name=tb_log_name)
+    def train_model(self, model, tb_log_name, total_timesteps=5000, n = 1):
+        model = model.learn(total_timesteps=total_timesteps, tb_log_name=tb_log_name, callback = TqdmCallback(total_timesteps, n))
         return model
 
 
@@ -163,8 +194,8 @@ class DRLEnsembleAgent:
         return model
 
     @staticmethod
-    def train_model(model, model_name, tb_log_name, iter_num, total_timesteps=5000):
-        model = model.learn(total_timesteps=total_timesteps, tb_log_name=tb_log_name)
+    def train_model(model, model_name, tb_log_name, iter_num, total_timesteps=5000, n = 1):
+        model = model.learn(total_timesteps=total_timesteps, tb_log_name=tb_log_name, callback = TqdmCallback(total_timesteps, n))
         model.save(f"{config.TRAINED_MODEL_DIR}/{model_name.upper()}_{total_timesteps//1000}k_{iter_num}")
         return model
 
@@ -180,7 +211,7 @@ class DRLEnsembleAgent:
                 train_period,val_test_period,
                 rebalance_window, validation_window,
                 stock_dim,
-                hmax,                
+                hmax,
                 initial_amount,
                 buy_cost_pct,
                 sell_cost_pct,
@@ -312,8 +343,8 @@ class DRLEnsembleAgent:
                 # if the mean of the historical data is less than the 90% quantile of insample turbulence data
                 # then we tune up the turbulence_threshold, meaning we lower the risk
                 turbulence_threshold = np.quantile(insample_turbulence.turbulence.values, 1)
-                
-            turbulence_threshold = np.quantile(insample_turbulence.turbulence.values, 0.99) 
+
+            turbulence_threshold = np.quantile(insample_turbulence.turbulence.values, 0.99)
             print("turbulence_threshold: ", turbulence_threshold)
 
             ############## Environment Setup starts ##############
