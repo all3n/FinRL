@@ -5,6 +5,8 @@ import gym
 from gym import spaces
 import matplotlib
 matplotlib.use('Agg')
+from tqdm import tqdm
+
 import matplotlib.pyplot as plt
 import pickle
 from stable_baselines3.common.vec_env import DummyVecEnv
@@ -75,23 +77,53 @@ class StockTradingEnv(gym.Env):
         #self.reset()
         self._seed()
         
+        self.data_count = len(self.df.index.unique())
+        
+    # state_space = 1 + 2*stock_dimension + len(config.TECHNICAL_INDICATORS_LIST)*stock_dimension
+    def get_balance(self):
+        return self.state[0]
+    
+    def set_balance(self, balance):
+        self.state[0] = balance
+    
+    def add_balance(self, add):
+        self.state[0] += add
+    
+    def get_amount(self, index):
+        return self.state[1 + index + self.stock_dim]
+    
+    def set_amount(self, index, amount):
+        self.state[1 + index +self.stock_dim] = amount
+    
+    def add_amount(self, index, amount):
+        self.state[1 + index +self.stock_dim] += amount
+        
+    def get_price(self, index):
+        return self.state[1 + index]
+    
+    def set_price(self, index, price):
+        self.state[1 + index ] = price
+        
+    def get_total_assets(self):
+        return self.get_balance() + \
+                sum(np.array(self.state[1:(self.stock_dim+1)]) * np.array(self.state[(self.stock_dim+1):(self.stock_dim*2+1)]))
 
+    
 
     def _sell_stock(self, index, action):
         def _do_sell_normal():
-            if self.state[index+1]>0: 
+            if self.get_price(index) >0: 
                 # Sell only if the price is > 0 (no missing data in this particular date)
                 # perform sell action based on the sign of the action
-                if self.state[index+self.stock_dim+1] > 0:
+                if self.get_amount(index) > 0:
                     # Sell only if current asset is > 0
-                    sell_num_shares = min(abs(action),self.state[index+self.stock_dim+1])
-                    sell_amount = self.state[index+1] * sell_num_shares * (1- self.sell_cost_pct)
+                    sell_num_shares = min(abs(action), self.get_amount(index))
+                    sell_amount = self.get_price(index) * sell_num_shares * (1 - self.sell_cost_pct)
                     #update balance
-                    self.state[0] += sell_amount
-
-                    self.state[index+self.stock_dim+1] -= sell_num_shares
-                    self.cost +=self.state[index+1] * sell_num_shares * self.sell_cost_pct
-                    self.trades+=1
+                    self.add_balance(sell_amount)
+                    self.add_amount(index, -sell_num_shares)
+                    self.cost += self.get_price(index) * sell_num_shares * self.sell_cost_pct
+                    self.trades += 1
                 else:
                     sell_num_shares = 0
             else:
@@ -102,19 +134,19 @@ class StockTradingEnv(gym.Env):
         # perform sell action based on the sign of the action
         if self.turbulence_threshold is not None:
             if self.turbulence>=self.turbulence_threshold:
-                if self.state[index+1]>0: 
+                if self.get_price(index) > 0: 
                     # Sell only if the price is > 0 (no missing data in this particular date)
                     # if turbulence goes over threshold, just clear out all positions 
-                    if self.state[index+self.stock_dim+1] > 0:
+                    # 清仓
+                    if self.get_amount(index) > 0:
                         # Sell only if current asset is > 0
-                        sell_num_shares = self.state[index+self.stock_dim+1]
-                        sell_amount = self.state[index+1]*sell_num_shares* (1- self.sell_cost_pct)
+                        sell_num_shares = self.get_amount(index)
+                        sell_amount = self.get_price(index) * sell_num_shares * (1- self.sell_cost_pct)
                         #update balance
-                        self.state[0] += sell_amount
-                        self.state[index+self.stock_dim+1] =0
-                        self.cost += self.state[index+1]*self.state[index+self.stock_dim+1]* \
-                                    self.sell_cost_pct
-                        self.trades+=1
+                        self.add_balance(sell_amount)
+                        self.set_amount(0)
+                        self.cost += self.get_price(index) * self.get_amount(index) * self.sell_cost_pct
+                        self.trades += 1
                     else:
                         sell_num_shares = 0
                 else:
@@ -130,20 +162,19 @@ class StockTradingEnv(gym.Env):
     def _buy_stock(self, index, action):
 
         def _do_buy():
-            if self.state[index+1]>0: 
+            if self.get_price(index) > 0: 
                 #Buy only if the price is > 0 (no missing data in this particular date)       
-                available_amount = self.state[0] // self.state[index+1]
+                available_amount = self.get_balance() // self.get_price(index)
                 # print('available_amount:{}'.format(available_amount))
                 
                 #update balance
-                buy_num_shares = min(available_amount, action)
-                buy_amount = self.state[index+1] * buy_num_shares * (1+ self.buy_cost_pct)
-                self.state[0] -= buy_amount
-
-                self.state[index+self.stock_dim+1] += buy_num_shares
-                
-                self.cost+=self.state[index+1] * buy_num_shares * self.buy_cost_pct
-                self.trades+=1
+                buy_num_shares = min(available_amount, abs(action))
+                buy_amount = self.get_price(index) * buy_num_shares * (1+ self.buy_cost_pct)
+                self.add_balance(-buy_amount
+                self.add_amount(buy_num_shares)
+                                 
+                self.cost += self.get_price(index) * buy_num_shares * self.buy_cost_pct
+                self.trades += 1
             else:
                 buy_num_shares = 0
 
@@ -153,7 +184,7 @@ class StockTradingEnv(gym.Env):
         if self.turbulence_threshold is None:
             buy_num_shares = _do_buy()
         else:
-            if self.turbulence< self.turbulence_threshold:
+            if self.turbulence < self.turbulence_threshold:
                 buy_num_shares = _do_buy()
             else:
                 buy_num_shares = 0
@@ -167,15 +198,15 @@ class StockTradingEnv(gym.Env):
         plt.close()
 
     def step(self, actions):
-        self.terminal = self.day >= len(self.df.index.unique())-1
+        self.tbar.update(1)
+        self.terminal = self.day >= self.data_count - 1
         if self.terminal:
             # print(f"Episode: {self.episode}")
             if self.make_plots:
                 self._make_plot()            
-            end_total_asset = self.state[0]+ \
-                sum(np.array(self.state[1:(self.stock_dim+1)])*np.array(self.state[(self.stock_dim+1):(self.stock_dim*2+1)]))
+            end_total_asset = self.get_total_assets()
             df_total_value = pd.DataFrame(self.asset_memory)
-            tot_reward = self.state[0]+sum(np.array(self.state[1:(self.stock_dim+1)])*np.array(self.state[(self.stock_dim+1):(self.stock_dim*2+1)]))- self.initial_amount 
+            tot_reward = end_total_asset - self.initial_amount 
             df_total_value.columns = ['account_value']
             df_total_value['date'] = self.date_memory
             df_total_value['daily_return']=df_total_value['account_value'].pct_change(1)
@@ -211,7 +242,7 @@ class StockTradingEnv(gym.Env):
             #logger.record("environment/total_reward_pct", (tot_reward / (end_total_asset - tot_reward)) * 100)
             #logger.record("environment/total_cost", self.cost)
             #logger.record("environment/total_trades", self.trades)
-
+            self.tbar.close()
             return self.state, self.reward, self.terminal, {}
 
         else:
@@ -282,9 +313,12 @@ class StockTradingEnv(gym.Env):
         self.date_memory=[self._get_date()]
         
         self.episode+=1
+        self.tbar = tqdm(total = len(self.df.index.unique()), desc = "EPISODE:" + str(self.episode), ncols = 80)
 
         return self.state
     
+
+
     def render(self, mode='human',close=False):
         return self.state
 

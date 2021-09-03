@@ -90,6 +90,10 @@ class DRLAgent:
     def __init__(self, env):
         self.env = env
 
+    def load_model(self, model_name, model_path):
+        model = MODELS[model_name].load(model_path)
+        return model
+        
     def get_model(
         self,
         model_name,
